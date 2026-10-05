@@ -439,6 +439,7 @@ const LocalSvgTileLayer = L.GridLayer.extend({
   createTile(coords, done) {
     const tile = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     tile.setAttribute('viewBox', '0 0 256 256');
+    tile.style.overflow = 'visible';
     const tilePath = state.basemap === 'political'
       ? `${DATA_CONFIG.tilePath}/political/${coords.z}/${coords.x}/${coords.y}.svg`
       : `${DATA_CONFIG.tilePath}/${coords.z}/${coords.x}/${coords.y}.svg`;
@@ -459,7 +460,15 @@ const LocalSvgTileLayer = L.GridLayer.extend({
         if (state.basemap === 'svg') {
           use.setAttribute('fill', state.landColor);
         }
-        tile.appendChild(document.importNode(use, true));
+        // Render one extra geometry unit beyond the tile edge to hide fractional-pixel seams.
+        const bleed = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        bleed.setAttribute('x', '0');
+        bleed.setAttribute('y', '0');
+        bleed.setAttribute('width', '257');
+        bleed.setAttribute('height', '257');
+        bleed.setAttribute('viewBox', '0 0 257 257');
+        bleed.appendChild(document.importNode(use, true));
+        tile.appendChild(bleed);
         done(null, tile);
       })
       .catch((error) => {
