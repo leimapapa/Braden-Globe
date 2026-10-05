@@ -23,13 +23,13 @@ window.L = L;
 
 const DATA_CONFIG = {
   // Local event chronology endpoint
-  eventsUrl: '/data/events.json',
+  eventsUrl: `${import.meta.env.BASE_URL}data/events.json`,
   
   // Local hourly wind vector files
-  windBaseDir: '/data/wind',
+  windBaseDir: `${import.meta.env.BASE_URL}data/wind`,
   baseDate: '20261005', // YYYYMMDD
   
-  tilePath: '/tiles/basemap'
+  tilePath: `${import.meta.env.BASE_URL}tiles/basemap`
 };
 
 const BASEMAPS = {
@@ -39,7 +39,7 @@ const BASEMAPS = {
   },
   'blue-marble': {
     name: 'Blue Marble',
-    url: '/tiles/blue-marble/{z}/{x}/{y}.jpg',
+    url: `${import.meta.env.BASE_URL}tiles/blue-marble/{z}/{x}/{y}.jpg`,
     attribution: 'Imagery provided by NASA GIBS / ESDIS'
   },
   political: {
@@ -404,6 +404,8 @@ const LocalSvgTileLayer = L.GridLayer.extend({
         const parsedTile = new DOMParser().parseFromString(svg, 'image/svg+xml');
         const use = parsedTile.querySelector('use');
         if (!use) throw new Error(`Local SVG tile ${tilePath} is missing its map geometry`);
+        const geometryFile = state.basemap === 'political' ? 'world-countries.svg#countries' : 'world.svg#land';
+        use.setAttribute('href', `${import.meta.env.BASE_URL}tiles/basemap/${geometryFile}`);
         if (state.basemap === 'svg') {
           use.setAttribute('fill', state.landColor);
         }

@@ -27,3 +27,9 @@ node scripts/generate-svg-map-tiles.mjs ne_10m_land.geojson public/tiles/basemap
    `npm install`
 2. Run the app:
    `npm run dev`
+
+## GitHub Pages deployment
+
+The `Deploy to GitHub Pages` workflow builds the site with Bun and deploys it from `main` (or when run manually). Pull requests run the build without publishing. The Vite configuration and local data/tile URLs use the `/Braden-Globe/` Pages base path so local map assets load from the project site.
+
+To enable deployment, ensure GitHub Pages is configured to use **GitHub Actions** as its build and deployment source in the repository’s Pages settings.
