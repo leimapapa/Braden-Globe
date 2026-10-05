@@ -1,0 +1,6 @@
+{
+  "name": "Braden Globe",
+  "description": "Offline-capable GIS dashboard for local map layers, hourly wind data, anomalous world events, and a 24-hour timeline.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
