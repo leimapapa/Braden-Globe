@@ -149,12 +149,14 @@ const dom = {
   btnToggleSidebar: document.getElementById('btn-toggle-sidebar'),
   mapControlsHud: document.getElementById('map-controls-hud'),
   btnToggleMapControls: document.getElementById('btn-toggle-map-controls'),
+  dragMapControls: document.getElementById('drag-map-controls'),
   settingsMenuWrap: document.getElementById('settings-menu-wrap'),
   btnSettings: document.getElementById('btn-settings'),
   settingsPopover: document.getElementById('settings-popover'),
   settingMapControls: document.getElementById('setting-map-controls'),
   settingMapLegend: document.getElementById('setting-map-legend'),
   legendHud: document.querySelector('.legend-hud'),
+  dragMapLegend: document.getElementById('drag-map-legend'),
   btnToggleLegend: document.getElementById('btn-toggle-legend'),
   timeScrubberTray: document.getElementById('time-scrubber-tray'),
   btnToggleTimeline: document.getElementById('btn-toggle-timeline'),
@@ -1283,6 +1285,138 @@ function handleNetcdfFileUpload(file) {
   reader.readAsText(file);
 }
 
+function setupDraggablePanel(panel, handle, storageKey, mobileLayout) {
+  if (!panel || !handle) return;
+
+  const positionKey = () => `${storageKey}_${mobileLayout.matches ? 'mobile' : 'desktop'}`;
+  const getStage = () => panel.closest('.map-stage');
+  const clampPosition = (left, top) => {
+    const stage = getStage();
+    const stageRect = stage.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    return {
+      left: Math.max(0, Math.min(left, Math.max(0, stageRect.width - panelRect.width))),
+      top: Math.max(0, Math.min(top, Math.max(0, stageRect.height - panelRect.height))),
+      stageRect,
+      panelRect
+    };
+  };
+
+  const applyPosition = () => {
+    if (panel.hidden) return;
+    const saved = localStorage.getItem(positionKey());
+    if (!saved) {
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.right = '';
+      panel.style.bottom = '';
+      return;
+    }
+
+    let position;
+    try {
+      position = JSON.parse(saved);
+    } catch (error) {
+      console.error(`Could not read saved ${storageKey} position:`, error);
+      localStorage.removeItem(positionKey());
+      return;
+    }
+    if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+      console.error(`Ignoring invalid saved ${storageKey} position.`);
+      localStorage.removeItem(positionKey());
+      return;
+    }
+
+    const stage = getStage();
+    const stageRect = stage.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const maxLeft = Math.max(0, stageRect.width - panelRect.width);
+    const maxTop = Math.max(0, stageRect.height - panelRect.height);
+    panel.style.left = `${Math.max(0, Math.min(position.x, 1)) * maxLeft}px`;
+    panel.style.top = `${Math.max(0, Math.min(position.y, 1)) * maxTop}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  };
+
+  const savePosition = (left, top) => {
+    const position = clampPosition(left, top);
+    panel.style.left = `${position.left}px`;
+    panel.style.top = `${position.top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    try {
+      localStorage.setItem(positionKey(), JSON.stringify({
+        x: position.stageRect.width > position.panelRect.width ? position.left / (position.stageRect.width - position.panelRect.width) : 0,
+        y: position.stageRect.height > position.panelRect.height ? position.top / (position.stageRect.height - position.panelRect.height) : 0
+      }));
+    } catch (error) {
+      console.error(`Could not save ${storageKey} position:`, error);
+      showToast('Panel moved, but its position could not be saved.');
+    }
+  };
+
+  let dragState = null;
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    const stage = getStage();
+    const stageRect = stage.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    dragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      left: panelRect.left - stageRect.left,
+      top: panelRect.top - stageRect.top
+    };
+    panel.classList.add('is-dragging');
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (event) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+    const position = clampPosition(
+      dragState.left + event.clientX - dragState.startX,
+      dragState.top + event.clientY - dragState.startY
+    );
+    panel.style.left = `${position.left}px`;
+    panel.style.top = `${position.top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  });
+
+  const finishDrag = (event) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+    const stageRect = getStage().getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    panel.classList.remove('is-dragging');
+    savePosition(panelRect.left - stageRect.left, panelRect.top - stageRect.top);
+    dragState = null;
+  };
+
+  handle.addEventListener('pointerup', finishDrag);
+  handle.addEventListener('pointercancel', finishDrag);
+  handle.addEventListener('keydown', (event) => {
+    const offsets = {
+      ArrowLeft: [-24, 0],
+      ArrowRight: [24, 0],
+      ArrowUp: [0, -24],
+      ArrowDown: [0, 24]
+    };
+    const offset = offsets[event.key];
+    if (!offset) return;
+    event.preventDefault();
+    const stageRect = getStage().getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const currentLeft = panelRect.left - stageRect.left;
+    const currentTop = panelRect.top - stageRect.top;
+    const position = clampPosition(currentLeft + offset[0], currentTop + offset[1]);
+    savePosition(position.left, position.top);
+  });
+  window.addEventListener('resize', applyPosition);
+  applyPosition();
+}
+
 /* ============================================================================
    14. EVENT LISTENERS SETUP
    ============================================================================ */
@@ -1382,6 +1516,8 @@ function setupEventListeners() {
   }
 
   const mobileLayout = window.matchMedia('(max-width: 700px)');
+  setupDraggablePanel(dom.mapControlsHud, dom.dragMapControls, 'braden_globe_map_controls_position', mobileLayout);
+  setupDraggablePanel(dom.legendHud, dom.dragMapLegend, 'braden_globe_map_legend_position', mobileLayout);
   const applyMapControlsVisibility = (isVisible, expand = false) => {
     state.showMapControls = isVisible;
     if (dom.mapControlsHud) dom.mapControlsHud.hidden = !isVisible;

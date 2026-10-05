@@ -143,7 +143,12 @@
         <!-- Floating Map Controls HUD (Top Right) -->
         <div class="hud-panel map-controls-hud" id="map-controls-hud">
           <div class="map-controls-heading">
-            <div class="hud-group-title">Map Controls</div>
+            <div class="map-controls-title">
+              <button type="button" class="hud-drag-handle" id="drag-map-controls" aria-label="Drag map controls" title="Drag to move map controls">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="8" cy="5" r="1.5"/><circle cx="16" cy="5" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/><circle cx="8" cy="19" r="1.5"/><circle cx="16" cy="19" r="1.5"/></svg>
+              </button>
+              <div class="hud-group-title">Map Controls</div>
+            </div>
             <button type="button" id="btn-toggle-map-controls" class="panel-toggle-btn" aria-controls="map-controls-content" aria-expanded="true">
               <span>Layers &amp; Overlays</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
@@ -218,7 +223,12 @@
         <!-- Floating Legend HUD (Bottom Left) -->
         <div class="hud-panel legend-hud">
           <div class="legend-heading">
-            <div class="legend-title">Map Legend</div>
+            <div class="legend-heading-title">
+              <button type="button" class="hud-drag-handle" id="drag-map-legend" aria-label="Drag map legend" title="Drag to move map legend">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="8" cy="5" r="1.5"/><circle cx="16" cy="5" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/><circle cx="8" cy="19" r="1.5"/><circle cx="16" cy="19" r="1.5"/></svg>
+              </button>
+              <div class="legend-title">Map Legend</div>
+            </div>
             <button type="button" id="btn-toggle-legend" class="legend-toggle-btn" aria-controls="legend-content" aria-expanded="true" title="Collapse map legend">
               <span>Hide</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>

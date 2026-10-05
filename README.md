@@ -23,7 +23,7 @@ node scripts/generate-svg-map-tiles.mjs ne_10m_land.geojson public/tiles/basemap
 node scripts/optimize-svg-map-geometry.mjs public/tiles/basemap
 ```
 
-The map legend can be minimized, and its preference is saved in browser storage. SVG tiles update after drag and zoom gestures finish to keep interactions responsive. Streamlines interpolate the regular wind grid directly instead of searching every wind point for each animated particle; non-grid uploads retain the nearest-point sampler. These rendering and lookup optimizations are handled natively by the browser, so a WebAssembly dependency is not needed.
+The map legend can be minimized, and its preference is saved in browser storage. The map controls and legend can be dragged by their grip handles on desktop or mobile, with separate saved positions for each screen size. SVG tiles update after drag and zoom gestures finish to keep interactions responsive. Streamlines interpolate the regular wind grid directly instead of searching every wind point for each animated particle; non-grid uploads retain the nearest-point sampler. These rendering and lookup optimizations are handled natively by the browser, so a WebAssembly dependency is not needed.
 
 
 1. Install dependencies:
