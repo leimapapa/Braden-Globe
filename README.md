@@ -25,6 +25,26 @@ node scripts/optimize-svg-map-geometry.mjs public/tiles/basemap
 
 The map legend can be minimized, and its preference is saved in browser storage. The map controls and legend can be dragged by their grip handles on desktop or mobile, with separate saved positions for each screen size. SVG tiles update after drag and zoom gestures finish to keep interactions responsive. Streamlines interpolate the regular wind grid directly instead of searching every wind point for each animated particle; non-grid uploads retain the nearest-point sampler. These rendering and lookup optimizations are handled natively by the browser, so a WebAssembly dependency is not needed.
 
+The NetCDF pipeline/import dialog is available from the Settings menu. Event-feed cards stay compact with truncated descriptions until selected; the selected card expands to show the full description, coordinates, and intensity while the map zooms to the event and opens its popover. The feed centers its cards vertically when the list fits, and keeps the list scrollable from the top when there are more events than fit.
+
+### Wind visualization
+
+Each wind vector has a tapered, color-matched visual trail behind its arrow. The trail is exaggerated for readability and is drawn from the current vector direction; it does not use prior hourly frames or represent elapsed time. Wind level selection and historical-tail controls are not currently exposed. When a frame contains multiple levels, the app uses its top-level `vectors` array, or the first entry in `levels` if no top-level vectors are present.
+
+The map controls panel scrolls within the available screen height, and its map-layer, shape-color, and overlay sections can be expanded or collapsed independently.
+
+The NetCDF converter uses the first vertical level it finds on the U/V wind variables (or the only field when no vertical coordinate exists):
+
+```json
+{
+  "timestamp": "2026-10-05T10:00:00Z",
+  "sourceMetadata": { "verticalLevel": "850 hPa" },
+  "vectors": [{ "lat": 0, "lng": 0, "u": 1.2, "v": -0.4, "speed": 1.26, "direction": 108.4 }]
+}
+```
+
+Existing multi-level JSON frames remain compatible: the app uses their top-level `vectors` array, or their first level when no top-level vectors are present. Generate one local JSON file per hour; visual trails do not require earlier hourly files.
+
 
 1. Install dependencies:
    `npm install`

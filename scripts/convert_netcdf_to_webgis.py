@@ -2,8 +2,9 @@
 Convert NetCDF Meteorological Wind Data (ERA5 / GFS / HRRR / WRF) to WebGIS JSON
 ==================================================================================
 This script reads any standard NetCDF (.nc / .nc4) meteorological file containing
-wind vector components (u10/v10, u/v, or UGRD/VGRD) and outputs lightweight,
-hourly JSON files directly into the WebGIS `/public/data/wind/` directory.
+wind vector components (u10/v10, u/v, or UGRD/VGRD) and outputs hourly JSON
+files into the WebGIS `/public/data/wind/` directory. If a vertical coordinate
+is present, the converter uses its first level.
 
 Prerequisites:
     pip install xarray netCDF4 numpy
@@ -35,11 +36,12 @@ def convert_netcdf(nc_path, output_dir, step_lat=5.0, step_lon=5.0):
     ds = xr.open_dataset(nc_path)
 
     # 1. Identify U and V variable names (zonal & meridional components)
-    u_candidates = ['u10', 'u', 'UGRD', 'u_wind', 'eastward_wind', 'U10M', 'var131']
-    v_candidates = ['v10', 'v', 'VGRD', 'v_wind', 'northward_wind', 'V10M', 'var132']
+    u_candidates = ['u', 'UGRD', 'u_wind', 'eastward_wind', 'u_component_of_wind', 'u10', 'U10M', 'var131']
+    v_candidates = ['v', 'VGRD', 'v_wind', 'northward_wind', 'v_component_of_wind', 'v10', 'V10M', 'var132']
 
-    var_u = next((v for v in u_candidates if v in ds.variables), None)
-    var_v = next((v for v in v_candidates if v in ds.variables), None)
+    variables_by_lower_name = {name.lower(): name for name in ds.variables}
+    var_u = next((variables_by_lower_name[name.lower()] for name in u_candidates if name.lower() in variables_by_lower_name), None)
+    var_v = next((variables_by_lower_name[name.lower()] for name in v_candidates if name.lower() in variables_by_lower_name), None)
 
     if not var_u or not var_v:
         print(f"[ERROR] Could not auto-detect wind variables. Found variables: {list(ds.variables.keys())}")
@@ -59,6 +61,43 @@ def convert_netcdf(nc_path, output_dir, step_lat=5.0, step_lon=5.0):
 
     if not coord_lat or not coord_lon:
         print(f"[ERROR] Latitude/Longitude coordinates not found in: {list(ds.coords.keys())}")
+        sys.exit(1)
+    if len(ds[coord_lat].dims) != 1 or len(ds[coord_lon].dims) != 1:
+        print("[ERROR] The converter requires one-dimensional latitude and longitude coordinates.")
+        sys.exit(1)
+    lat_dim = ds[coord_lat].dims[0]
+    lon_dim = ds[coord_lon].dims[0]
+    time_dim = ds[coord_time].dims[0] if coord_time and ds[coord_time].dims else None
+
+    extra_dims = [dim for dim in ds[var_u].dims if dim not in (lat_dim, lon_dim, time_dim)]
+    v_extra_dims = [dim for dim in ds[var_v].dims if dim not in (lat_dim, lon_dim, time_dim)]
+    if set(extra_dims) != set(v_extra_dims):
+        print(f"[ERROR] U and V variables have different non-horizontal dimensions: {extra_dims} vs {v_extra_dims}")
+        sys.exit(1)
+    vertical_names = {'level', 'lev', 'lvl', 'pressure', 'pressure_level', 'isobaric', 'isobaricinhpa',
+                      'height', 'altitude', 'alt', 'z', 'model_level', 'model_level_number', 'hybrid',
+                      'plev', 'sigma', 'bottom_top', 'bottom_top_stag', 'height_above_ground', 'heightaboveground'}
+    vertical_candidates = []
+    for dim in extra_dims:
+        coordinate = ds[dim] if dim in ds.coords else None
+        standard_name = (coordinate.attrs.get('standard_name', '') if coordinate is not None else '').lower()
+        long_name = (coordinate.attrs.get('long_name', '') if coordinate is not None else '').lower()
+        axis = (coordinate.attrs.get('axis', '') if coordinate is not None else '').lower()
+        positive = (coordinate.attrs.get('positive', '') if coordinate is not None else '').lower()
+        if (dim.lower() in vertical_names or 'pressure' in standard_name or 'pressure' in long_name or
+                'height' in standard_name or 'height' in long_name or 'altitude' in standard_name or
+                positive in ('up', 'down') or axis == 'z'):
+            vertical_candidates.append(dim)
+    if len(vertical_candidates) > 1:
+        print(f"[ERROR] Expected at most one vertical dimension in '{var_u}', found: {vertical_candidates}")
+        sys.exit(1)
+    vertical_dim = vertical_candidates[0] if vertical_candidates else None
+    unsupported_dims = [dim for dim in extra_dims if dim != vertical_dim and ds.sizes[dim] > 1]
+    if unsupported_dims:
+        print(f"[ERROR] Unsupported non-vertical dimension(s) in '{var_u}': {unsupported_dims}")
+        sys.exit(1)
+    if vertical_dim and vertical_dim not in ds[var_v].dims:
+        print(f"[ERROR] U and V variables do not share vertical dimension '{vertical_dim}'.")
         sys.exit(1)
 
     # 3. Normalize Longitude from [0, 360] to [-180, 180] if necessary
@@ -83,19 +122,27 @@ def convert_netcdf(nc_path, output_dir, step_lat=5.0, step_lon=5.0):
 
     print(f"[INFO] Subsampled grid: {len(target_lats)} latitudes x {len(target_lons)} longitudes ({len(target_lats)*len(target_lons)} points per frame)")
 
+    vertical_level = None
+    if vertical_dim:
+        level_coord = ds[vertical_dim] if vertical_dim in ds.coords else None
+        if level_coord is not None:
+            vertical_level = str(level_coord.values[0])
+            level_unit = level_coord.attrs.get('units')
+            if level_unit:
+                vertical_level = f"{vertical_level} {level_unit}"
+        else:
+            vertical_level = "index 0"
+        print(f"[INFO] Using the first vertical level: {vertical_level}")
+
     # 5. Process each hourly time step
-    num_times = len(sub_ds[coord_time]) if coord_time and coord_time in sub_ds else 1
+    num_times = sub_ds.sizes[time_dim] if time_dim else 1
     print(f"[INFO] Processing {num_times} time step(s)...")
 
     for idx in range(num_times):
-        frame = sub_ds.isel({coord_time: idx}) if coord_time and num_times > 1 else sub_ds
-        
-        # Squeeze down to 2D matrix (lat, lon)
-        u_arr = np.squeeze(frame[var_u].values)
-        v_arr = np.squeeze(frame[var_v].values)
+        frame = sub_ds.isel({time_dim: idx}) if time_dim else sub_ds
 
         # Retrieve timestamp
-        if coord_time and coord_time in frame:
+        if coord_time and coord_time in frame.coords:
             raw_time = str(frame[coord_time].values)
             # Format to ISO 8601 UTC
             time_iso = raw_time[:19] + "Z"
@@ -112,13 +159,21 @@ def convert_netcdf(nc_path, output_dir, step_lat=5.0, step_lon=5.0):
         filename = f"wind_{date_part}_{hour_part}00.json"
         out_filepath = os.path.join(output_dir, filename)
 
+        selection = {}
+        if time_dim and time_dim in frame[var_u].dims:
+            selection[time_dim] = idx
+        if vertical_dim:
+            selection[vertical_dim] = 0
+        selection.update({dim: 0 for dim in extra_dims if dim != vertical_dim})
+        u_arr = np.asarray(frame[var_u].isel(selection).transpose(lat_dim, lon_dim).values)
+        v_arr = np.asarray(frame[var_v].isel(selection).transpose(lat_dim, lon_dim).values)
         vectors = []
         for i_lat, lat in enumerate(target_lats):
             for i_lon, lon in enumerate(target_lons):
                 u_val = float(u_arr[i_lat, i_lon])
                 v_val = float(v_arr[i_lat, i_lon])
 
-                if np.isnan(u_val) or np.isnan(v_val):
+                if not np.isfinite(u_val) or not np.isfinite(v_val):
                     continue
 
                 speed = float(np.sqrt(u_val**2 + v_val**2))
@@ -141,6 +196,8 @@ def convert_netcdf(nc_path, output_dir, step_lat=5.0, step_lon=5.0):
             "sourceMetadata": {
                 "uVariable": var_u,
                 "vVariable": var_v,
+                "verticalDimension": vertical_dim,
+                "verticalLevel": vertical_level,
                 "gridStep": f"{step_lat}x{step_lon} deg",
                 "pointCount": len(vectors)
             },
@@ -150,8 +207,9 @@ def convert_netcdf(nc_path, output_dir, step_lat=5.0, step_lon=5.0):
         with open(out_filepath, "w", encoding="utf-8") as f:
             json.dump(output_data, f, separators=(',', ':'))
 
-        print(f"  [✓] Frame {idx+1}/{num_times}: {filename} ({len(vectors)} points)")
+        print(f"  [OK] Frame {idx+1}/{num_times}: {filename} ({len(vectors)} vectors)")
 
+    ds.close()
     print(f"[SUCCESS] All frames generated in {output_dir}")
 
 if __name__ == "__main__":

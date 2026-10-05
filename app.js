@@ -107,10 +107,12 @@ const state = {
   // Current wind data frame (normalized)
   currentWindData: null,
   windGrid: null,
+  windFrameCache: new Map(),
+  windFrameRequestId: 0,
   pendingUploadedWind: null,
   
   // Layer visibility toggles
-  showWindVectors: true,
+  showWindVectors: false,
   showStreamlines: true,
   showEvents: true,
   
@@ -173,6 +175,7 @@ const dom = {
   
   // Layer Toggles
   toggleWindVectors: document.getElementById('toggle-wind-vectors'),
+  svgColorSection: document.getElementById('svg-color-section'),
   toggleWindStreamlines: document.getElementById('toggle-wind-streamlines'),
   toggleEvents: document.getElementById('toggle-events'),
   
@@ -303,7 +306,7 @@ function normalizeVector(v) {
  * - GeoJSON vector LineString/Point FeatureCollections
  * - Flat list of vector objects ({ vectors: [...] } or [ { lat, lon, u, v } ])
  */
-function parseWindDataset(rawJson) {
+function parseSingleWindDataset(rawJson) {
   if (!rawJson) return null;
 
   let vectors = [];
@@ -399,6 +402,35 @@ function parseWindDataset(rawJson) {
   };
 }
 
+function parseWindDataset(rawJson) {
+  if (!rawJson || typeof rawJson !== 'object') {
+    throw new Error('Wind dataset must be a JSON object or vector array.');
+  }
+
+  if (Array.isArray(rawJson.levels) && !rawJson.levels.length) {
+    throw new Error('Wind dataset "levels" must contain at least one level.');
+  }
+
+  if (Array.isArray(rawJson.vectors) && rawJson.vectors.length) {
+    return parseSingleWindDataset(rawJson);
+  }
+
+  const firstLevel = rawJson.levels?.[0];
+  if (firstLevel && typeof firstLevel === 'object') {
+    const firstLevelData = firstLevel.data && typeof firstLevel.data === 'object'
+      ? firstLevel.data
+      : firstLevel;
+    return parseSingleWindDataset({
+      ...rawJson,
+      ...firstLevelData,
+      timestamp: firstLevelData.timestamp || rawJson.timestamp,
+      levels: undefined
+    });
+  }
+
+  return parseSingleWindDataset(rawJson);
+}
+
 /* ============================================================================
    6. LOCAL SVG TILE STORAGE & RENDERING
    ============================================================================ */
@@ -449,6 +481,7 @@ function applyBaseTileLayer() {
   const basemap = BASEMAPS[state.basemap];
   state.map.getContainer().style.backgroundColor = state.seaColor;
   if (dom.svgColorControls) dom.svgColorControls.hidden = state.basemap !== 'svg';
+  if (dom.svgColorSection) dom.svgColorSection.hidden = state.basemap !== 'svg';
 
   if (state.basemap === 'blue-marble') {
     state.activeBaseTileLayer = L.tileLayer(basemap.url, {
@@ -538,7 +571,6 @@ function initMap() {
 
   state.map.attributionControl.setPrefix(false);
   applyBaseTileLayer();
-
   state.map.on('mousemove', (e) => {
     if (dom.cursorLat && dom.cursorLng) {
       dom.cursorLat.textContent = formatCoord(e.latlng.lat, true);
@@ -594,30 +626,42 @@ async function loadEventsData() {
 }
 
 function getWindFilePath(hourIndex) {
-  const padHour = pad2(hourIndex);
-  return `${DATA_CONFIG.windBaseDir}/wind_${DATA_CONFIG.baseDate}_${padHour}00.json`;
+  const [year, month, day] = DATA_CONFIG.baseDate.match(/(\d{4})(\d{2})(\d{2})/).slice(1).map(Number);
+  const timestamp = new Date(Date.UTC(year, month - 1, day, hourIndex));
+  const date = `${timestamp.getUTCFullYear()}${pad2(timestamp.getUTCMonth() + 1)}${pad2(timestamp.getUTCDate())}`;
+  return `${DATA_CONFIG.windBaseDir}/wind_${date}_${pad2(timestamp.getUTCHours())}00.json`;
+}
+
+async function getWindFrame(hourIndex) {
+  const filePath = getWindFilePath(hourIndex);
+  if (!state.windFrameCache.has(filePath)) {
+    const request = fetch(filePath).then((response) => {
+      if (!response.ok) throw new Error(`Local wind frame ${filePath} returned HTTP ${response.status}`);
+      return response.json();
+    }).then(parseWindDataset);
+    state.windFrameCache.set(filePath, request);
+    request.catch(() => state.windFrameCache.delete(filePath));
+  }
+  return state.windFrameCache.get(filePath);
 }
 
 async function loadWindDataForHour(hourIndex) {
   const filePath = getWindFilePath(hourIndex);
-  
+  const requestId = ++state.windFrameRequestId;
   if (dom.activeFileIndicator) {
     dom.activeFileIndicator.textContent = filePath;
   }
-  
+
   try {
-    const res = await fetch(filePath);
-    if (!res.ok) throw new Error(`Status ${res.status}`);
-    
-    const rawJson = await res.json();
-    state.currentWindData = parseWindDataset(rawJson);
-    state.windGrid = createWindGrid(state.currentWindData.vectors);
-    
+    const frame = await getWindFrame(hourIndex);
+    if (requestId !== state.windFrameRequestId) return;
+    state.currentWindData = frame;
+    state.windGrid = createWindGrid(frame.vectors);
     renderWindVectors();
     initStreamlineParticles();
   } catch (err) {
     console.error(`Failed to load wind frame for hour ${hourIndex}:`, err);
-    showToast(`Notice: Local wind file not found at ${filePath}`);
+    if (requestId === state.windFrameRequestId) showToast(`Could not load local wind frame: ${err.message}`);
   }
 }
 
@@ -700,6 +744,7 @@ function renderEventSidebar() {
         No events match current filter criteria.
       </div>
     `;
+    requestAnimationFrame(updateEventFeedAlignment);
     return;
   }
 
@@ -708,6 +753,9 @@ function renderEventSidebar() {
     const isSelected = state.selectedEventId === evt.id;
     const card = document.createElement('div');
     card.className = `event-card ${isSelected ? 'selected' : ''}`;
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-expanded', String(isSelected));
     card.setAttribute('data-type', evt.type);
     card.setAttribute('data-event-id', evt.id);
 
@@ -727,8 +775,21 @@ function renderEventSidebar() {
     `;
 
     card.addEventListener('click', () => selectEvent(evt.id, true));
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectEvent(evt.id, true);
+    });
     dom.eventsList.appendChild(card);
   });
+  requestAnimationFrame(updateEventFeedAlignment);
+}
+
+function updateEventFeedAlignment() {
+  const feed = dom.eventsList;
+  if (!feed) return;
+  const hasVerticalOverflow = feed.scrollHeight > feed.clientHeight + 1;
+  feed.classList.toggle('is-centered', !hasVerticalOverflow);
 }
 
 function selectEvent(eventId, flyToMap = true) {
@@ -737,11 +798,14 @@ function selectEvent(eventId, flyToMap = true) {
   document.querySelectorAll('.event-card').forEach(el => {
     if (el.getAttribute('data-event-id') === eventId) {
       el.classList.add('selected');
+      el.setAttribute('aria-expanded', 'true');
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     } else {
       el.classList.remove('selected');
+      el.setAttribute('aria-expanded', 'false');
     }
   });
+  requestAnimationFrame(updateEventFeedAlignment);
 
   const evt = state.events.find(e => e.id === eventId);
   if (!evt) return;
@@ -782,14 +846,23 @@ function renderWindVectors() {
 
   const vectors = state.currentWindData.vectors || [];
 
-  vectors.forEach(v => {
+  vectors.forEach((v, index) => {
     const color = getWindColor(v.speed);
     const arrowSize = Math.max(14, Math.min(26, Math.round(14 + (v.speed / 45) * 12)));
+    const arrowHeight = arrowSize + 14;
     const rotationDeg = (v.direction + 180) % 360;
 
     const svgIconHtml = `
-      <div class="wind-arrow-icon" style="transform: rotate(${rotationDeg}deg); width: ${arrowSize}px; height: ${arrowSize}px;">
-        <svg viewBox="0 0 24 24" width="${arrowSize}" height="${arrowSize}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <div class="wind-arrow-icon" style="transform: rotate(${rotationDeg}deg); width: ${arrowSize}px; height: ${arrowHeight}px;">
+        <svg viewBox="0 0 24 40" width="${arrowSize}" height="${arrowHeight}px" preserveAspectRatio="none" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <defs>
+            <linearGradient id="wind-tail-${index}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${color}" stop-opacity="0.62"></stop>
+              <stop offset="55%" stop-color="${color}" stop-opacity="0.3"></stop>
+              <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+            </linearGradient>
+          </defs>
+          <path d="M9 18 L15 18 Q12.4 27 12 40 Q11.6 27 9 18Z" fill="url(#wind-tail-${index})" stroke="none"></path>
           <line x1="12" y1="19" x2="12" y2="5"></line>
           <polyline points="5 12 12 5 19 12"></polyline>
         </svg>
@@ -799,8 +872,8 @@ function renderWindVectors() {
     const icon = L.divIcon({
       className: 'leaflet-wind-vector-icon',
       html: svgIconHtml,
-      iconSize: [arrowSize, arrowSize],
-      iconAnchor: [arrowSize / 2, arrowSize / 2]
+      iconSize: [arrowSize, arrowHeight],
+      iconAnchor: [arrowSize / 2, arrowHeight / 2]
     });
 
     const marker = L.marker([v.lat, v.lng], {
@@ -878,13 +951,8 @@ function createRandomParticle() {
   };
 }
 
-function sampleWindAt(lat, lng) {
-  if (!state.currentWindData || !state.currentWindData.vectors) {
-    return { u: 0, v: 0, speed: 0 };
-  }
-
-  if (state.windGrid) {
-    const grid = state.windGrid;
+function sampleWindVectorsAt(vectors, grid, lat, lng) {
+  if (grid) {
     const [lowerLat, upperLat, latRatio] = findGridBracket(grid.latitudes, lat);
     let normalizedLng = lng;
     while (normalizedLng < grid.longitudes[0]) normalizedLng += 360;
@@ -920,7 +988,6 @@ function sampleWindAt(lat, lng) {
   while (nLng > 180) nLng -= 360;
   while (nLng < -180) nLng += 360;
 
-  const vectors = state.currentWindData.vectors;
   let closest = null;
   let minDist = Infinity;
   for (let i = 0; i < vectors.length; i++) {
@@ -936,6 +1003,13 @@ function sampleWindAt(lat, lng) {
   }
 
   return closest || { u: 0, v: 0, speed: 0 };
+}
+
+function sampleWindAt(lat, lng) {
+  if (!state.currentWindData || !state.currentWindData.vectors) {
+    return { u: 0, v: 0, speed: 0 };
+  }
+  return sampleWindVectorsAt(state.currentWindData.vectors, state.windGrid, lat, lng);
 }
 
 function findGridUpperIndex(values, target) {
@@ -1423,6 +1497,20 @@ function setupDraggablePanel(panel, handle, storageKey, mobileLayout) {
 
 function setupEventListeners() {
   setupModalAndUploadListeners();
+
+  document.querySelectorAll('.control-section[data-section-key]').forEach((section) => {
+    const storageKey = `braden_globe_controls_section_${section.dataset.sectionKey}`;
+    const savedState = localStorage.getItem(storageKey);
+    if (savedState !== null) section.open = savedState === 'open';
+    section.addEventListener('toggle', () => {
+      try {
+        localStorage.setItem(storageKey, section.open ? 'open' : 'closed');
+      } catch (error) {
+        console.error(`Could not save ${section.dataset.sectionKey} section state:`, error);
+        showToast('Control section changed, but could not be saved in browser storage.');
+      }
+    });
+  });
 
   dom.basemapOptions.forEach((button) => {
     button.addEventListener('click', () => selectBasemap(button.dataset.basemap));

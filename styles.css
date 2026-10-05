@@ -197,6 +197,29 @@ html, body {
   cursor: pointer;
 }
 
+.settings-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  margin-top: 6px;
+  padding: 7px 0 0;
+  color: var(--accent-cyan);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  font: 11px var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-action:hover,
+.settings-action:focus-visible {
+  color: #ffffff;
+  outline: none;
+}
+
 #map-controls-hud[hidden],
 .legend-hud[hidden] {
   display: none !important;
@@ -379,7 +402,12 @@ html, body {
   padding: 12px;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
   gap: 8px;
+}
+
+.events-feed-container.is-centered {
+  justify-content: center;
 }
 
 .events-feed-container::-webkit-scrollbar {
@@ -392,10 +420,11 @@ html, body {
 
 /* Individual Event Card */
 .event-card {
+  flex: 0 0 auto;
   background: var(--bg-surface-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  padding: 12px;
+  padding: 8px 10px;
   cursor: pointer;
   transition: all 0.15s ease;
   position: relative;
@@ -412,6 +441,7 @@ html, body {
   border-color: var(--accent-cyan);
   box-shadow: 0 0 12px rgba(6, 182, 212, 0.2);
   background: rgba(14, 25, 45, 0.9);
+  padding: 12px;
 }
 
 .event-card::before {
@@ -431,7 +461,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .event-type-badge {
@@ -459,22 +489,38 @@ html, body {
   font-size: 13px;
   font-weight: 600;
   color: #ffffff;
-  margin-bottom: 4px;
+  margin-bottom: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .event-desc {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.4;
-  margin-bottom: 8px;
+  margin: 2px 0 0;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
+.event-card.selected .event-title {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.event-card.selected .event-desc {
+  display: block;
+  -webkit-line-clamp: unset;
+  margin-bottom: 8px;
+  overflow: visible;
+}
+
 .event-footer {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: space-between;
   font-family: var(--font-mono);
@@ -482,6 +528,10 @@ html, body {
   color: var(--text-dim);
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   padding-top: 6px;
+}
+
+.event-card.selected .event-footer {
+  display: flex;
 }
 
 .event-coords {
@@ -574,6 +624,7 @@ html, body {
   top: 16px;
   right: 16px;
   width: 236px;
+  max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -667,9 +718,22 @@ html, body {
 }
 
 .map-controls-content {
+  min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--border-focus) transparent;
+  scrollbar-width: thin;
+}
+
+.map-controls-content::-webkit-scrollbar { width: 5px; }
+.map-controls-content::-webkit-scrollbar-thumb {
+  background: var(--border-focus);
+  border-radius: 4px;
 }
 
 .map-controls-hud.collapsed .map-controls-content {
@@ -678,6 +742,62 @@ html, body {
 
 .map-controls-hud.collapsed {
   width: auto;
+  max-height: none;
+}
+
+.control-section {
+  min-width: 0;
+}
+
+.control-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--text-dim);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.control-section-heading::-webkit-details-marker {
+  display: none;
+}
+
+.control-section-heading::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-right: 3px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.16s ease;
+}
+
+.control-section[open] > .control-section-heading::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.control-section-heading:hover,
+.control-section-heading:focus-visible {
+  color: var(--accent-cyan);
+  outline: none;
+}
+
+.control-section-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 3px;
+}
+
+.control-section[hidden] {
+  display: none;
 }
 
 .hud-group-title {
