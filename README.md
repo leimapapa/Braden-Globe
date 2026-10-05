@@ -10,7 +10,7 @@ Offline-capable GIS dashboard with three local map layers, configurable map colo
 
 The selector offers three layers stored locally in `public/tiles/`:
 
-- **Shape Map** — high-resolution Natural Earth 1:10m land geometry as SVG tiles; land and sea colors are configurable and saved in browser storage.
+- **Shape Map** — Natural Earth 1:10m land geometry as SVG tiles, with low-detail geometry at zooms 0–2, medium detail at 3–4, and original full detail at zoom 5; land and sea colors are configurable and saved in browser storage.
 - **Blue Marble** — NASA global shaded-relief imagery as local JPEG tiles, zoom levels 0–3. NASA requests the acknowledgment “Imagery provided by NASA GIBS / ESDIS.”
 - **Countries** — Natural Earth 1:10m country outlines, rendered as locally stored SVG tiles.
 
@@ -20,7 +20,10 @@ Regenerate the SVG layers after obtaining the Natural Earth 1:10m land and admin
 
 ```sh
 node scripts/generate-svg-map-tiles.mjs ne_10m_land.geojson public/tiles/basemap ne_10m_admin_0_countries.geojson
+node scripts/optimize-svg-map-geometry.mjs public/tiles/basemap
 ```
+
+The map legend can be minimized, and its preference is saved in browser storage. SVG tiles update after drag and zoom gestures finish to keep interactions responsive. Streamlines interpolate the regular wind grid directly instead of searching every wind point for each animated particle; non-grid uploads retain the nearest-point sampler. These rendering and lookup optimizations are handled natively by the browser, so a WebAssembly dependency is not needed.
 
 
 1. Install dependencies:

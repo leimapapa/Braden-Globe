@@ -58,6 +58,23 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>
           <span>Reset View</span>
         </button>
+        <div class="settings-menu-wrap" id="settings-menu-wrap">
+          <button type="button" id="btn-settings" class="btn-header" aria-label="Display settings" aria-controls="settings-popover" aria-expanded="false" title="Display settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.7-1.4-2.4 1.4-1.1a8 8 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.7 1.4 2.4-1.4 1.1a8 8 0 0 1 0 2Z"/></svg>
+            <span>Settings</span>
+          </button>
+          <div class="settings-popover" id="settings-popover" role="group" aria-labelledby="settings-title" hidden>
+            <div class="settings-title" id="settings-title">Map Display</div>
+            <label class="settings-option" for="setting-map-controls">
+              <span>Map layers &amp; overlays</span>
+              <input type="checkbox" id="setting-map-controls" />
+            </label>
+            <label class="settings-option" for="setting-map-legend">
+              <span>Map legend</span>
+              <input type="checkbox" id="setting-map-legend" />
+            </label>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -200,28 +217,37 @@
 
         <!-- Floating Legend HUD (Bottom Left) -->
         <div class="hud-panel legend-hud">
-          <div class="legend-title">Wind Velocity (10m ASL)</div>
-          <div class="wind-scale-bar"></div>
-          <div class="wind-scale-labels">
-            <span>0 m/s (Calm)</span>
-            <span>15 m/s</span>
-            <span>30 m/s</span>
-            <span>45+ m/s (Gale)</span>
+          <div class="legend-heading">
+            <div class="legend-title">Map Legend</div>
+            <button type="button" id="btn-toggle-legend" class="legend-toggle-btn" aria-controls="legend-content" aria-expanded="true" title="Collapse map legend">
+              <span>Hide</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
           </div>
+          <div class="legend-content" id="legend-content">
+            <div class="legend-title">Wind Velocity (10m ASL)</div>
+            <div class="wind-scale-bar"></div>
+            <div class="wind-scale-labels">
+              <span>0 m/s (Calm)</span>
+              <span>15 m/s</span>
+              <span>30 m/s</span>
+              <span>45+ m/s (Gale)</span>
+            </div>
 
-          <div class="legend-title" style="margin-top: 10px;">Event Anchors</div>
-          <div class="event-legend-items">
-            <div class="legend-item">
-              <div class="legend-color-dot volcano"></div>
-              <span>Crimson: Volcanoes (Ash & Plumes)</span>
-            </div>
-            <div class="legend-item">
-              <div class="legend-color-dot rocket"></div>
-              <span>Cyan: Rocket Launches (Orbital Ascent)</span>
-            </div>
-            <div class="legend-item">
-              <div class="legend-color-dot bolide"></div>
-              <span>Gold: Bolides (Fireballs & Airbursts)</span>
+            <div class="legend-title" style="margin-top: 10px;">Event Anchors</div>
+            <div class="event-legend-items">
+              <div class="legend-item">
+                <div class="legend-color-dot volcano"></div>
+                <span>Crimson: Volcanoes (Ash & Plumes)</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color-dot rocket"></div>
+                <span>Cyan: Rocket Launches (Orbital Ascent)</span>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color-dot bolide"></div>
+                <span>Gold: Bolides (Fireballs & Airbursts)</span>
+              </div>
             </div>
           </div>
         </div>

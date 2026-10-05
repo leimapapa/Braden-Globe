@@ -58,6 +58,10 @@ function loadBasemap() {
   return Object.hasOwn(BASEMAPS, basemap) ? basemap : 'svg';
 }
 
+function loadVisibilitySetting(key) {
+  return localStorage.getItem(key) !== 'false';
+}
+
 // Event visual anchors: color tokens matching user specifications
 const EVENT_THEMES = {
   volcano: {
@@ -85,6 +89,8 @@ const state = {
   basemap: loadBasemap(),
   landColor: loadMapColor('terra_land_color', '#18352f'),
   seaColor: loadMapColor('terra_sea_color', '#070b13'),
+  showMapControls: loadVisibilitySetting('braden_globe_map_controls_visible'),
+  showMapLegend: loadVisibilitySetting('braden_globe_map_legend_visible'),
   
   // Scrubber & playback
   currentHour: 10,       // 00 to 23
@@ -100,6 +106,7 @@ const state = {
   
   // Current wind data frame (normalized)
   currentWindData: null,
+  windGrid: null,
   pendingUploadedWind: null,
   
   // Layer visibility toggles
@@ -142,6 +149,13 @@ const dom = {
   btnToggleSidebar: document.getElementById('btn-toggle-sidebar'),
   mapControlsHud: document.getElementById('map-controls-hud'),
   btnToggleMapControls: document.getElementById('btn-toggle-map-controls'),
+  settingsMenuWrap: document.getElementById('settings-menu-wrap'),
+  btnSettings: document.getElementById('btn-settings'),
+  settingsPopover: document.getElementById('settings-popover'),
+  settingMapControls: document.getElementById('setting-map-controls'),
+  settingMapLegend: document.getElementById('setting-map-legend'),
+  legendHud: document.querySelector('.legend-hud'),
+  btnToggleLegend: document.getElementById('btn-toggle-legend'),
   timeScrubberTray: document.getElementById('time-scrubber-tray'),
   btnToggleTimeline: document.getElementById('btn-toggle-timeline'),
   btnRecenter: document.getElementById('btn-recenter'),
@@ -404,8 +418,10 @@ const LocalSvgTileLayer = L.GridLayer.extend({
         const parsedTile = new DOMParser().parseFromString(svg, 'image/svg+xml');
         const use = parsedTile.querySelector('use');
         if (!use) throw new Error(`Local SVG tile ${tilePath} is missing its map geometry`);
-        const geometryFile = state.basemap === 'political' ? 'world-countries.svg#countries' : 'world.svg#land';
-        use.setAttribute('href', `${import.meta.env.BASE_URL}tiles/basemap/${geometryFile}`);
+        const geometryPrefix = state.basemap === 'political' ? 'world-countries' : 'world';
+        const geometryId = state.basemap === 'political' ? 'countries' : 'land';
+        const fidelity = coords.z <= 2 ? '-low' : coords.z <= 4 ? '-medium' : '';
+        use.setAttribute('href', `${import.meta.env.BASE_URL}tiles/basemap/${geometryPrefix}${fidelity}.svg#${geometryId}`);
         if (state.basemap === 'svg') {
           use.setAttribute('fill', state.landColor);
         }
@@ -445,6 +461,9 @@ function applyBaseTileLayer() {
       maxZoom: 14,
       maxNativeZoom: 5,
       tileSize: 256,
+      updateWhenIdle: true,
+      updateWhenZooming: false,
+      keepBuffer: 2,
       attribution: basemap.attribution
     });
   }
@@ -531,10 +550,6 @@ function initMap() {
     }
   });
 
-  state.map.on('move resize zoom', () => {
-    resizeStreamlineCanvas();
-  });
-
   // Watch map container size and continuously update Leaflet to prevent grey/empty tiles
   if (window.ResizeObserver && dom.mapContainer) {
     const ro = new ResizeObserver(() => {
@@ -594,6 +609,7 @@ async function loadWindDataForHour(hourIndex) {
     
     const rawJson = await res.json();
     state.currentWindData = parseWindDataset(rawJson);
+    state.windGrid = createWindGrid(state.currentWindData.vectors);
     
     renderWindVectors();
     initStreamlineParticles();
@@ -843,7 +859,7 @@ function initStreamlineParticles() {
     state.particles.push(createRandomParticle());
   }
 
-  if (!state.animationFrameId) {
+  if (state.showStreamlines && !state.animationFrameId) {
     startStreamlineAnimation();
   }
 }
@@ -863,6 +879,39 @@ function createRandomParticle() {
 function sampleWindAt(lat, lng) {
   if (!state.currentWindData || !state.currentWindData.vectors) {
     return { u: 0, v: 0, speed: 0 };
+  }
+
+  if (state.windGrid) {
+    const grid = state.windGrid;
+    const [lowerLat, upperLat, latRatio] = findGridBracket(grid.latitudes, lat);
+    let normalizedLng = lng;
+    while (normalizedLng < grid.longitudes[0]) normalizedLng += 360;
+    while (normalizedLng >= grid.longitudes[0] + 360) normalizedLng -= 360;
+
+    const upperLngIndex = findGridUpperIndex(grid.extendedLongitudes, normalizedLng);
+    const lowerLngIndex = upperLngIndex - 1;
+    const lowerLongitude = grid.extendedLongitudes[lowerLngIndex];
+    const upperLongitude = grid.extendedLongitudes[upperLngIndex];
+    const longitudeRatio = upperLongitude === lowerLongitude
+      ? 0
+      : (normalizedLng - lowerLongitude) / (upperLongitude - lowerLongitude);
+    const lowerLng = lowerLngIndex % grid.longitudes.length;
+    const upperLng = upperLngIndex % grid.longitudes.length;
+
+    const lowerRow = grid.rows[lowerLat];
+    const upperRow = grid.rows[upperLat];
+    const lowerLeft = lowerRow[lowerLng];
+    const lowerRight = lowerRow[upperLng];
+    const upperLeft = upperRow[lowerLng];
+    const upperRight = upperRow[upperLng];
+    const interpolate = (key) => {
+      const lower = lowerLeft[key] + (lowerRight[key] - lowerLeft[key]) * longitudeRatio;
+      const upper = upperLeft[key] + (upperRight[key] - upperLeft[key]) * longitudeRatio;
+      return lower + (upper - lower) * latRatio;
+    };
+    const u = interpolate('u');
+    const v = interpolate('v');
+    return { u, v, speed: Math.hypot(u, v) };
   }
   
   let nLng = lng;
@@ -887,8 +936,61 @@ function sampleWindAt(lat, lng) {
   return closest || { u: 0, v: 0, speed: 0 };
 }
 
+function findGridUpperIndex(values, target) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (values[middle] <= target) low = middle + 1;
+    else high = middle;
+  }
+  return Math.max(1, Math.min(values.length - 1, low));
+}
+
+function findGridBracket(values, target) {
+  if (target <= values[0]) return [0, 0, 0];
+  if (target >= values[values.length - 1]) {
+    const last = values.length - 1;
+    return [last, last, 0];
+  }
+
+  const upper = findGridUpperIndex(values, target);
+  const lower = upper - 1;
+  return [lower, upper, (target - values[lower]) / (values[upper] - values[lower])];
+}
+
+function createWindGrid(vectors) {
+  const latitudes = [...new Set(vectors.map(({ lat }) => lat))].sort((a, b) => a - b);
+  const longitudes = [...new Set(vectors.map(({ lng }) => lng))].sort((a, b) => a - b);
+  if (latitudes.length * longitudes.length !== vectors.length || !latitudes.length || !longitudes.length) {
+    return null;
+  }
+
+  const latitudeIndices = new Map(latitudes.map((latitude, index) => [latitude, index]));
+  const longitudeIndices = new Map(longitudes.map((longitude, index) => [longitude, index]));
+  const rows = Array.from({ length: latitudes.length }, () => Array(longitudes.length));
+  for (const vector of vectors) {
+    const row = latitudeIndices.get(vector.lat);
+    const column = longitudeIndices.get(vector.lng);
+    if (rows[row][column]) return null;
+    rows[row][column] = vector;
+  }
+  if (rows.some((row) => row.some((vector) => !vector))) return null;
+
+  const extendedLongitudes = [
+    ...longitudes,
+    ...longitudes.map((longitude) => longitude + 360)
+  ];
+  return { latitudes, longitudes, extendedLongitudes, rows };
+}
+
 function startStreamlineAnimation() {
   function animate() {
+    if (!state.showStreamlines) {
+      state.animationFrameId = null;
+      return;
+    }
+
     if (!state.map || !state.streamlineCtx) {
       state.animationFrameId = requestAnimationFrame(animate);
       return;
@@ -901,11 +1003,6 @@ function startStreamlineAnimation() {
 
     // Clear canvas completely so map tiles remain visible
     ctx.clearRect(0, 0, width, height);
-
-    if (!state.showStreamlines) {
-      state.animationFrameId = requestAnimationFrame(animate);
-      return;
-    }
 
     ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
@@ -1137,6 +1234,7 @@ function setupModalAndUploadListeners() {
     dom.btnApplyUploadedWind.addEventListener('click', () => {
       if (state.pendingUploadedWind) {
         state.currentWindData = state.pendingUploadedWind;
+        state.windGrid = createWindGrid(state.currentWindData.vectors);
         renderWindVectors();
         initStreamlineParticles();
         
@@ -1254,8 +1352,14 @@ function setupEventListeners() {
   if (dom.toggleWindStreamlines) {
     dom.toggleWindStreamlines.addEventListener('change', (e) => {
       state.showStreamlines = e.target.checked;
-      if (!state.showStreamlines && state.streamlineCtx) {
-        state.streamlineCtx.clearRect(0, 0, state.streamlineCanvas.width, state.streamlineCanvas.height);
+      if (!state.showStreamlines) {
+        if (state.animationFrameId) cancelAnimationFrame(state.animationFrameId);
+        state.animationFrameId = null;
+        if (state.streamlineCtx) {
+          state.streamlineCtx.clearRect(0, 0, state.streamlineCanvas.width, state.streamlineCanvas.height);
+        }
+      } else {
+        startStreamlineAnimation();
       }
     });
   }
@@ -1278,6 +1382,69 @@ function setupEventListeners() {
   }
 
   const mobileLayout = window.matchMedia('(max-width: 700px)');
+  const applyMapControlsVisibility = (isVisible, expand = false) => {
+    state.showMapControls = isVisible;
+    if (dom.mapControlsHud) dom.mapControlsHud.hidden = !isVisible;
+    if (dom.settingMapControls) dom.settingMapControls.checked = isVisible;
+    localStorage.setItem('braden_globe_map_controls_visible', String(isVisible));
+    if (isVisible && expand && dom.mapControlsHud) {
+      dom.mapControlsHud.classList.remove('collapsed');
+      dom.btnToggleMapControls?.setAttribute('aria-expanded', 'true');
+    }
+  };
+
+  const applyMapLegendVisibility = (isVisible, expand = false) => {
+    state.showMapLegend = isVisible;
+    if (dom.legendHud) dom.legendHud.hidden = !isVisible;
+    if (dom.settingMapLegend) dom.settingMapLegend.checked = isVisible;
+    localStorage.setItem('braden_globe_map_legend_visible', String(isVisible));
+    if (isVisible && expand && dom.legendHud) {
+      dom.legendHud.classList.remove('collapsed');
+      localStorage.setItem('braden_globe_legend_collapsed', 'false');
+      if (dom.btnToggleLegend) {
+        dom.btnToggleLegend.setAttribute('aria-expanded', 'true');
+        dom.btnToggleLegend.title = 'Collapse map legend';
+        dom.btnToggleLegend.querySelector('span').textContent = 'Hide';
+      }
+    }
+  };
+
+  applyMapControlsVisibility(state.showMapControls);
+  applyMapLegendVisibility(state.showMapLegend);
+  if (dom.settingMapControls) {
+    dom.settingMapControls.addEventListener('change', () => {
+      applyMapControlsVisibility(dom.settingMapControls.checked, dom.settingMapControls.checked);
+    });
+  }
+  if (dom.settingMapLegend) {
+    dom.settingMapLegend.addEventListener('change', () => {
+      applyMapLegendVisibility(dom.settingMapLegend.checked, dom.settingMapLegend.checked);
+    });
+  }
+
+  if (dom.btnSettings && dom.settingsPopover) {
+    dom.btnSettings.addEventListener('click', () => {
+      const isOpen = dom.settingsPopover.hidden;
+      dom.settingsPopover.hidden = !isOpen;
+      dom.btnSettings.setAttribute('aria-expanded', String(isOpen));
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+      if (!dom.settingsMenuWrap?.contains(event.target)) {
+        dom.settingsPopover.hidden = true;
+        dom.btnSettings.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !dom.settingsPopover.hidden) {
+        dom.settingsPopover.hidden = true;
+        dom.btnSettings.setAttribute('aria-expanded', 'false');
+        dom.btnSettings.focus();
+      }
+    });
+  }
+
   const syncResponsivePanels = (isMobile) => {
     if (dom.sidebar) {
       dom.sidebar.classList.toggle('collapsed', isMobile);
@@ -1287,10 +1454,22 @@ function setupEventListeners() {
       dom.btnToggleSidebar.setAttribute('aria-expanded', String(!isMobile));
     }
     if (dom.mapControlsHud) {
+      dom.mapControlsHud.hidden = !state.showMapControls;
       dom.mapControlsHud.classList.toggle('collapsed', isMobile);
     }
     if (dom.btnToggleMapControls) {
       dom.btnToggleMapControls.setAttribute('aria-expanded', String(!isMobile));
+    }
+    if (dom.legendHud) {
+      dom.legendHud.hidden = !state.showMapLegend;
+      const savedCollapsed = localStorage.getItem('braden_globe_legend_collapsed');
+      const isCollapsed = savedCollapsed === null ? isMobile : savedCollapsed === 'true';
+      dom.legendHud.classList.toggle('collapsed', isCollapsed);
+      if (dom.btnToggleLegend) {
+        dom.btnToggleLegend.setAttribute('aria-expanded', String(!isCollapsed));
+        dom.btnToggleLegend.title = isCollapsed ? 'Expand map legend' : 'Collapse map legend';
+        dom.btnToggleLegend.querySelector('span').textContent = isCollapsed ? 'Show' : 'Hide';
+      }
     }
     if (dom.timeScrubberTray) {
       dom.timeScrubberTray.classList.toggle('collapsed', isMobile);
@@ -1322,6 +1501,16 @@ function setupEventListeners() {
     dom.btnToggleMapControls.addEventListener('click', () => {
       const isCollapsed = dom.mapControlsHud.classList.toggle('collapsed');
       dom.btnToggleMapControls.setAttribute('aria-expanded', String(!isCollapsed));
+    });
+  }
+
+  if (dom.btnToggleLegend && dom.legendHud) {
+    dom.btnToggleLegend.addEventListener('click', () => {
+      const isCollapsed = dom.legendHud.classList.toggle('collapsed');
+      localStorage.setItem('braden_globe_legend_collapsed', String(isCollapsed));
+      dom.btnToggleLegend.setAttribute('aria-expanded', String(!isCollapsed));
+      dom.btnToggleLegend.title = isCollapsed ? 'Expand map legend' : 'Collapse map legend';
+      dom.btnToggleLegend.querySelector('span').textContent = isCollapsed ? 'Show' : 'Hide';
     });
   }
 
