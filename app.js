@@ -114,7 +114,9 @@ const state = {
   // Layer visibility toggles
   showWindVectors: false,
   showStreamlines: true,
+  streamlineColorBySpeed: localStorage.getItem('braden_globe_streamline_color') === 'speed',
   showEvents: true,
+  mapMoving: false,
   
   // Leaflet map references
   map: null,
@@ -177,6 +179,7 @@ const dom = {
   toggleWindVectors: document.getElementById('toggle-wind-vectors'),
   svgColorSection: document.getElementById('svg-color-section'),
   toggleWindStreamlines: document.getElementById('toggle-wind-streamlines'),
+  toggleStreamlineSpeedColors: document.getElementById('toggle-streamline-speed-colors'),
   toggleEvents: document.getElementById('toggle-events'),
   
   // Atmospheric Vector Probe HUD
@@ -580,6 +583,14 @@ function initMap() {
 
   state.map.attributionControl.setPrefix(false);
   applyBaseTileLayer();
+  state.map.on('movestart zoomstart', () => {
+    state.mapMoving = true;
+    clearStreamlineCanvas();
+  });
+  state.map.on('moveend', () => {
+    state.mapMoving = false;
+    initStreamlineParticles();
+  });
   state.map.on('mousemove', (e) => {
     if (dom.cursorLat && dom.cursorLng) {
       dom.cursorLat.textContent = formatCoord(e.latlng.lat, true);
@@ -928,36 +939,54 @@ function resizeStreamlineCanvas() {
   state.streamlineCanvas.style.height = `${rect.height}px`;
   
   if (state.streamlineCtx) {
-    state.streamlineCtx.setTransform(1, 0, 0, 1, 0, 0);
-    state.streamlineCtx.scale(dpr, dpr);
+    state.streamlineCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 }
 
 function initStreamlineParticles() {
   if (!state.streamlineCanvas) return;
 
-  const count = 300;
+  const { width, height } = dom.mapContainer.getBoundingClientRect();
+  const count = Math.max(700, Math.min(1800, Math.round(width * height / 600)));
   state.particles = [];
 
   for (let i = 0; i < count; i++) {
     state.particles.push(createRandomParticle());
   }
 
+  clearStreamlineCanvas();
   if (state.showStreamlines && !state.animationFrameId) {
     startStreamlineAnimation();
   }
 }
 
 function createRandomParticle() {
+  const rect = dom.mapContainer.getBoundingClientRect();
+  const x = Math.random() * rect.width;
+  const y = Math.random() * rect.height;
+  const position = state.map
+    ? state.map.containerPointToLatLng([x, y])
+    : { lat: -65 + Math.random() * 135, lng: -180 + Math.random() * 360 };
   return {
-    lat: -65 + Math.random() * 135,
-    lng: -180 + Math.random() * 360,
-    prevLat: null,
-    prevLng: null,
-    age: Math.floor(Math.random() * 60),
-    maxAge: 60 + Math.floor(Math.random() * 50),
+    lat: position.lat,
+    lng: position.lng,
+    age: 0,
+    maxAge: 180 + Math.floor(Math.random() * 180),
+    trailLength: 28 + Math.floor(Math.random() * 28),
+    trail: [],
+    opacity: 0.55 + Math.random() * 0.45,
     speed: 0
   };
+}
+
+function clearStreamlineCanvas() {
+  const canvas = state.streamlineCanvas;
+  const context = state.streamlineCtx;
+  if (!canvas || !context) return;
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.restore();
 }
 
 function sampleWindVectorsAt(vectors, grid, lat, lng) {
@@ -974,20 +1003,31 @@ function sampleWindVectorsAt(vectors, grid, lat, lng) {
     const longitudeRatio = upperLongitude === lowerLongitude
       ? 0
       : (normalizedLng - lowerLongitude) / (upperLongitude - lowerLongitude);
-    const lowerLng = lowerLngIndex % grid.longitudes.length;
-    const upperLng = upperLngIndex % grid.longitudes.length;
-
-    const lowerRow = grid.rows[lowerLat];
-    const upperRow = grid.rows[upperLat];
-    const lowerLeft = lowerRow[lowerLng];
-    const lowerRight = lowerRow[upperLng];
-    const upperLeft = upperRow[lowerLng];
-    const upperRight = upperRow[upperLng];
-    const interpolate = (key) => {
-      const lower = lowerLeft[key] + (lowerRight[key] - lowerLeft[key]) * longitudeRatio;
-      const upper = upperLeft[key] + (upperRight[key] - upperLeft[key]) * longitudeRatio;
-      return lower + (upper - lower) * latRatio;
+    const interpolateCubic = (before, start, end, after, ratio) =>
+      start + 0.5 * ratio * (
+        end - before + ratio * (
+          2 * before - 5 * start + 4 * end - after +
+          ratio * (3 * (start - end) + after - before)
+        )
+      );
+    const wrapIndex = (index, length) => (index % length + length) % length;
+    const sampleRow = (rowIndex, key) => {
+      const row = grid.rows[Math.max(0, Math.min(grid.rows.length - 1, rowIndex))];
+      const columns = [
+        lowerLngIndex - 1,
+        lowerLngIndex,
+        lowerLngIndex + 1,
+        lowerLngIndex + 2
+      ].map((index) => row[wrapIndex(index, grid.longitudes.length)][key]);
+      return interpolateCubic(...columns, longitudeRatio);
     };
+    const interpolate = (key) => interpolateCubic(
+      sampleRow(lowerLat - 1, key),
+      sampleRow(lowerLat, key),
+      sampleRow(upperLat, key),
+      sampleRow(upperLat + 1, key),
+      latRatio
+    );
     const u = interpolate('u');
     const v = interpolate('v');
     return { u, v, speed: Math.hypot(u, v) };
@@ -1082,60 +1122,71 @@ function startStreamlineAnimation() {
     }
 
     const ctx = state.streamlineCtx;
+    if (state.mapMoving) {
+      state.animationFrameId = requestAnimationFrame(animate);
+      return;
+    }
     const rect = dom.mapContainer.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
 
-    // Clear canvas completely so map tiles remain visible
     ctx.clearRect(0, 0, width, height);
-
-    ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
 
     for (let i = 0; i < state.particles.length; i++) {
       const p = state.particles[i];
       p.age++;
 
-      if (p.age >= p.maxAge) {
+      const pt1 = state.map.latLngToContainerPoint([p.lat, p.lng]);
+      if (p.age >= p.maxAge ||
+          pt1.x < -30 || pt1.x > width + 30 ||
+          pt1.y < -30 || pt1.y > height + 30) {
         state.particles[i] = createRandomParticle();
         continue;
       }
 
       const sample = sampleWindAt(p.lat, p.lng);
       p.speed = sample.speed;
-
-      p.prevLat = p.lat;
-      p.prevLng = p.lng;
-
-      const dt = 0.045;
-      p.lng += sample.u * dt;
-      p.lat += sample.v * dt;
-
-      if (p.lng > 180) p.lng -= 360;
-      if (p.lng < -180) p.lng += 360;
-
-      if (p.lat > 80 || p.lat < -80) {
-        state.particles[i] = createRandomParticle();
-        continue;
+      if (sample.speed >= 0.5) {
+        const pixelStep = Math.min(2.2, 0.45 + sample.speed * 0.055);
+        const pt2 = L.point(
+          pt1.x + sample.u / sample.speed * pixelStep,
+          pt1.y - sample.v / sample.speed * pixelStep
+        );
+        if (pt2.x < -30 || pt2.x > width + 30 || pt2.y < -30 || pt2.y > height + 30) {
+          state.particles[i] = createRandomParticle();
+          continue;
+        }
+        const nextPosition = state.map.containerPointToLatLng(pt2);
+        p.lat = nextPosition.lat;
+        p.lng = nextPosition.lng;
+        p.trail.push(pt2);
+      } else {
+        p.trail.push(pt1);
       }
 
-      const pt1 = state.map.latLngToContainerPoint([p.prevLat, p.prevLng]);
-      const pt2 = state.map.latLngToContainerPoint([p.lat, p.lng]);
+      if (p.trail.length > p.trailLength) p.trail.shift();
+      if (p.trail.length < 2) continue;
 
-      const dx = Math.abs(pt2.x - pt1.x);
-      if (dx < 100 &&
-          pt2.x >= -10 && pt2.x <= width + 10 &&
-          pt2.y >= -10 && pt2.y <= height + 10) {
-        const color = getWindColor(p.speed);
-        const alpha = Math.sin((p.age / p.maxAge) * Math.PI) * 0.85;
-        
-        ctx.strokeStyle = color;
-        ctx.globalAlpha = Math.max(0.15, alpha);
-        ctx.beginPath();
-        ctx.moveTo(pt1.x, pt1.y);
-        ctx.lineTo(pt2.x, pt2.y);
-        ctx.stroke();
+      const oldest = p.trail[0];
+      const newest = p.trail[p.trail.length - 1];
+      const strength = p.opacity * Math.min(0.8, 0.3 + p.speed * 0.018);
+      const color = state.streamlineColorBySpeed ? getWindColor(p.speed) : '#e9f6ff';
+      const red = Number.parseInt(color.slice(1, 3), 16);
+      const green = Number.parseInt(color.slice(3, 5), 16);
+      const blue = Number.parseInt(color.slice(5, 7), 16);
+      const gradient = ctx.createLinearGradient(oldest.x, oldest.y, newest.x, newest.y);
+      gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 0)`);
+      gradient.addColorStop(0.45, `rgba(${red}, ${green}, ${blue}, ${strength * 0.35})`);
+      gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, ${strength})`);
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = 0.7 + Math.min(0.6, p.speed * 0.02);
+      ctx.beginPath();
+      ctx.moveTo(oldest.x, oldest.y);
+      for (let pointIndex = 1; pointIndex < p.trail.length; pointIndex++) {
+        ctx.lineTo(p.trail[pointIndex].x, p.trail[pointIndex].y);
       }
+      ctx.stroke();
     }
 
     ctx.globalAlpha = 1.0;
@@ -1591,6 +1642,22 @@ function setupEventListeners() {
         }
       } else {
         startStreamlineAnimation();
+      }
+    });
+  }
+
+  if (dom.toggleStreamlineSpeedColors) {
+    dom.toggleStreamlineSpeedColors.checked = state.streamlineColorBySpeed;
+    dom.toggleStreamlineSpeedColors.addEventListener('change', (e) => {
+      state.streamlineColorBySpeed = e.target.checked;
+      try {
+        localStorage.setItem(
+          'braden_globe_streamline_color',
+          state.streamlineColorBySpeed ? 'speed' : 'white'
+        );
+      } catch (error) {
+        console.error('Could not save streamline color preference:', error);
+        showToast('Streamline color changed, but could not be saved in browser storage.');
       }
     });
   }
