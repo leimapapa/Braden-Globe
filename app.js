@@ -120,6 +120,7 @@ const state = {
   
   // Leaflet map references
   map: null,
+  backgroundBaseTileLayer: null,
   activeBaseTileLayer: null,
   eventMarkersLayerGroup: null,
   windVectorsLayerGroup: null,
@@ -486,8 +487,14 @@ const LocalSvgTileLayer = L.GridLayer.extend({
 function applyBaseTileLayer() {
   if (!state.map) return;
 
+  if (state.backgroundBaseTileLayer) {
+    state.map.removeLayer(state.backgroundBaseTileLayer);
+    state.backgroundBaseTileLayer = null;
+  }
+
   if (state.activeBaseTileLayer) {
     state.map.removeLayer(state.activeBaseTileLayer);
+    state.activeBaseTileLayer = null;
   }
 
   const basemap = BASEMAPS[state.basemap];
@@ -496,6 +503,15 @@ function applyBaseTileLayer() {
   if (dom.svgColorSection) dom.svgColorSection.hidden = state.basemap !== 'svg';
 
   if (state.basemap === 'blue-marble') {
+    state.backgroundBaseTileLayer = L.tileLayer(basemap.url, {
+      minZoom: 0,
+      maxNativeZoom: 1,
+      maxZoom: 14,
+      updateWhenIdle: false,
+      updateWhenZooming: false,
+      keepBuffer: 2,
+      attribution: basemap.attribution
+    });
     state.activeBaseTileLayer = L.tileLayer(basemap.url, {
       minZoom: 0,
       maxNativeZoom: 3,
@@ -503,18 +519,22 @@ function applyBaseTileLayer() {
       attribution: basemap.attribution
     });
   } else {
-    state.activeBaseTileLayer = new LocalSvgTileLayer({
+    const createSvgLayer = (maxNativeZoom, updateWhenIdle) => new LocalSvgTileLayer({
       minZoom: 0,
       maxZoom: 14,
-      maxNativeZoom: 5,
+      maxNativeZoom,
       tileSize: 256,
-      updateWhenIdle: true,
+      updateWhenIdle,
       updateWhenZooming: false,
       keepBuffer: 2,
       attribution: basemap.attribution
     });
+
+    state.backgroundBaseTileLayer = createSvgLayer(2, false);
+    state.activeBaseTileLayer = createSvgLayer(5, true);
   }
 
+  state.backgroundBaseTileLayer.addTo(state.map);
   state.activeBaseTileLayer.addTo(state.map);
   updateBasemapSelector();
 }
